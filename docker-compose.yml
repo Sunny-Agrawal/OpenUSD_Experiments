@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  openusd:
+    image: openusd_experiments_image
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/usr/local/OpenUSD         # Mount entire repo
+      - ./src:/usr/local/OpenUSD/src # Mount source code directory
+      - ./build:/usr/local/OpenUSD/build # Mount build output directory
+    working_dir: /usr/local/OpenUSD/src
+    tty: true
+    environment:
+      - PATH=/usr/local/OpenUSD/src:$PATH
+    runtime: nvidia # Enable GPU acceleration if available
