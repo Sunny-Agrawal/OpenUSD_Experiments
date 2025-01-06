@@ -20,3 +20,6 @@ __pycache__/
 
 # Ignore build artifacts
 build/
+
+# Ignore anaconda environment
+env/

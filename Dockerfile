@@ -8,9 +8,11 @@
     # ---------------------------------------------------------------------------
     RUN apt-get update && apt-get install -y \
         build-essential \
+        bash-completion \
         cmake \
         git \
         wget \
+        nvidia-container-toolkit\
         libglu-dev libxinerama-dev libxcursor-dev libxi-dev \
         libxrandr-dev libx11-dev \
         x11-apps \
@@ -27,18 +29,22 @@
     ENV PATH=/opt/conda/bin:$PATH
     
     # ---------------------------------------------------------------------------
-    # Copy Conda environment and install dependencies
+    # Initialize Conda in the shell
     # ---------------------------------------------------------------------------
-    COPY environment.yml /tmp/environment.yml
-    RUN conda env create -f /tmp/environment.yml && conda clean -a
-    RUN echo "conda activate openusd_env" >> ~/.bashrc
-    ENV CONDA_DEFAULT_ENV=openusd_env
-    ENV PATH="/opt/conda/envs/openusd_env/bin:$PATH"
+    RUN /opt/conda/bin/conda init bash
     
     # ---------------------------------------------------------------------------
-    # Set environment variables for USD
+    # Add Conda Environment Creation During Build
     # ---------------------------------------------------------------------------
-    ENV PATH="/usr/local/USD/bin:${PATH}"
+    COPY environment.yml /tmp/environment.yml
+    RUN /opt/conda/bin/conda env create -f /tmp/environment.yml -p /opt/conda/envs/openusd_env || true
+    ENV PATH=/opt/conda/envs/openusd_env/bin:$PATH
+    RUN echo "conda activate /opt/conda/envs/openusd_env" >> ~/.bashrc
+    
+    # ---------------------------------------------------------------------------
+    # Set environment variables for USD (adjust paths as needed)
+    # ---------------------------------------------------------------------------
+    ENV PATH="/usr/local/OpenUSD/src:/usr/local/USD/bin:/opt/conda/envs/openusd_env/bin:/opt/conda/bin:/bin:/usr/bin:/usr/local/bin:${PATH}"
     ENV PYTHONPATH="/usr/local/USD/lib/python:${PYTHONPATH}"
     
     # ---------------------------------------------------------------------------
