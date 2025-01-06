@@ -10,6 +10,7 @@
         build-essential \
         cmake \
         git \
+        wget \
         libglu-dev libxinerama-dev libxcursor-dev libxi-dev \
         libxrandr-dev libx11-dev \
         x11-apps \
@@ -22,7 +23,7 @@
     RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh && \
         bash miniconda.sh -b -p /opt/conda && \
         rm miniconda.sh && \
-        /opt/conda/bin/conda clean -tipsy
+        /opt/conda/bin/conda clean -t -i -p -y
     ENV PATH=/opt/conda/bin:$PATH
     
     # ---------------------------------------------------------------------------
