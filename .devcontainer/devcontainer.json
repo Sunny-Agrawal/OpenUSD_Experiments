@@ -1,0 +1,16 @@
+{
+  "name": "OpenUSD Dev Environment",
+  "dockerComposeFile": "../docker-compose.yml",   // Use your compose file
+  "service": "openusd",                           // Attach to this service
+  "workspaceFolder": "/usr/local/OpenUSD",        // Path inside the container
+  "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "ms-python.python",
+                "ms-azuretools.vscode-docker"
+            ]
+        }
+    }
+}

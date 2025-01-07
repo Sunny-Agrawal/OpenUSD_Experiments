@@ -14,7 +14,7 @@ services:
       - .:/usr/local/OpenUSD          # Mount entire repo
       - ./src:/usr/local/OpenUSD/src  # Mount source code directory
       - ./build:/usr/local/OpenUSD/build # Mount build output directory
-      - ./env:/usr/local/OpenUSD/env  # Mount Conda environment directory
+      - ./env:/opt/conda/envs  # Mount Conda environment directory
     working_dir: /usr/local/OpenUSD/src
     tty: true
 

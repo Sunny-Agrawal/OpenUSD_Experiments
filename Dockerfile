@@ -15,6 +15,7 @@
         nvidia-container-toolkit\
         libglu-dev libxinerama-dev libxcursor-dev libxi-dev \
         libxrandr-dev libx11-dev \
+        libtbb-dev \
         x11-apps \
         xvfb \
         && rm -rf /var/lib/apt/lists/*
@@ -39,13 +40,13 @@
     COPY environment.yml /tmp/environment.yml
     RUN /opt/conda/bin/conda env create -f /tmp/environment.yml -p /opt/conda/envs/openusd_env || true
     ENV PATH=/opt/conda/envs/openusd_env/bin:$PATH
-    RUN echo "conda activate /opt/conda/envs/openusd_env" >> ~/.bashrc
+    RUN echo "conda activate openusd_env" >> ~/.bashrc
     
     # ---------------------------------------------------------------------------
     # Set environment variables for USD (adjust paths as needed)
     # ---------------------------------------------------------------------------
     ENV PATH="/usr/local/OpenUSD/src:/usr/local/USD/bin:/opt/conda/envs/openusd_env/bin:/opt/conda/bin:/bin:/usr/bin:/usr/local/bin:${PATH}"
-    ENV PYTHONPATH="/usr/local/USD/lib/python:${PYTHONPATH}"
+    ENV PYTHONPATH="/opt/conda/envs/openusd_env/lib/python3.9/site-packages:$PYTHONPATH"
     
     # ---------------------------------------------------------------------------
     # Default command: Interactive shell
