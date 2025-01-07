@@ -15,6 +15,7 @@ services:
       - ./src:/usr/local/OpenUSD/src  # Mount source code directory
       - ./build:/usr/local/OpenUSD/build # Mount build output directory
       - ./env:/opt/conda/envs  # Mount Conda environment directory
+      - ./environment.yml:/tmp/environment.yml # Mount environment file for runtime
     working_dir: /usr/local/OpenUSD/src
     tty: true
 

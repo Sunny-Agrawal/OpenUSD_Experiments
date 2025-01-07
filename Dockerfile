@@ -12,7 +12,7 @@
         cmake \
         git \
         wget \
-        nvidia-container-toolkit\
+        nvidia-container-toolkit \
         libglu-dev libxinerama-dev libxcursor-dev libxi-dev \
         libxrandr-dev libx11-dev \
         libtbb-dev \
@@ -33,23 +33,19 @@
     # Initialize Conda in the shell
     # ---------------------------------------------------------------------------
     RUN /opt/conda/bin/conda init bash
+
+    # Initialize Conda and ensure .bashrc is sourced in future sessions
+    RUN echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc
     
     # ---------------------------------------------------------------------------
-    # Add Conda Environment Creation During Build
+    # Copy Entrypoint Script and Make It Executable
     # ---------------------------------------------------------------------------
-    COPY environment.yml /tmp/environment.yml
-    RUN /opt/conda/bin/conda env create -f /tmp/environment.yml -p /opt/conda/envs/openusd_env || true
-    ENV PATH=/opt/conda/envs/openusd_env/bin:$PATH
-    RUN echo "conda activate openusd_env" >> ~/.bashrc
+    COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+    RUN chmod +x /usr/local/bin/entrypoint.sh
     
     # ---------------------------------------------------------------------------
-    # Set environment variables for USD (adjust paths as needed)
+    # Use Entrypoint Script and Default Command
     # ---------------------------------------------------------------------------
-    ENV PATH="/usr/local/OpenUSD/src:/usr/local/USD/bin:/opt/conda/envs/openusd_env/bin:/opt/conda/bin:/bin:/usr/bin:/usr/local/bin:${PATH}"
-    ENV PYTHONPATH="/opt/conda/envs/openusd_env/lib/python3.9/site-packages:$PYTHONPATH"
-    
-    # ---------------------------------------------------------------------------
-    # Default command: Interactive shell
-    # ---------------------------------------------------------------------------
+    ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
     CMD ["/bin/bash"]
     
