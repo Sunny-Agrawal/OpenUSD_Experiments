@@ -35,7 +35,7 @@
     RUN /opt/conda/bin/conda init bash
 
     # Initialize Conda and ensure .bashrc is sourced in future sessions
-    RUN echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc
+    RUN echo ". /opt/conda/etc/profile.d/conda.sh && conda activate /opt/conda/envs/openusd_env" >> ~/.bashrc
     
     # ---------------------------------------------------------------------------
     # Copy Entrypoint Script and Make It Executable

@@ -8,6 +8,7 @@ dependencies:
   - PySide6
   - PyOpenGL
   - jinja2
+  - tbb
   - cmake
   - pip
   - pip:
