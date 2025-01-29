@@ -14,7 +14,7 @@
         wget \
         nvidia-container-toolkit \
         libglu-dev libxinerama-dev libxcursor-dev libxi-dev \
-        libxrandr-dev libx11-dev \
+        libxrandr-dev libx11-dev libxt-dev libxmu-dev libxpm-dev \
         libtbb-dev \
         x11-apps \
         xvfb \
@@ -33,9 +33,14 @@
     # Initialize Conda in the shell
     # ---------------------------------------------------------------------------
     RUN /opt/conda/bin/conda init bash
-
+    
     # Initialize Conda and ensure .bashrc is sourced in future sessions
     RUN echo ". /opt/conda/etc/profile.d/conda.sh && conda activate /opt/conda/envs/openusd_env" >> ~/.bashrc
+    
+    # ---------------------------------------------------------------------------
+    # Ensure Python static library is correctly linked
+    # ---------------------------------------------------------------------------
+    RUN ln -s /usr/lib/x86_64-linux-gnu/libpython3.9.a /opt/conda/envs/openusd_env/lib/libpython3.9.a || true
     
     # ---------------------------------------------------------------------------
     # Copy Entrypoint Script and Make It Executable

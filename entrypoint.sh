@@ -16,5 +16,11 @@ fi
 echo "Activating Conda environment..."
 conda activate /opt/conda/envs/openusd_env
 
+# Fix missing libpython3.9.a by linking libpython3.9.so
+if [ ! -f "/opt/conda/envs/openusd_env/lib/libpython3.9.a" ]; then
+    echo "Creating symlink for missing libpython3.9.a..."
+    ln -s /opt/conda/envs/openusd_env/lib/libpython3.9.so /opt/conda/envs/openusd_env/lib/libpython3.9.a
+fi
+
 # Pass control to CMD or keep container running
 exec "$@"
