@@ -56,13 +56,15 @@ class HdxTaskController;
 class UsdImagingDelegate;
 
 TF_DECLARE_WEAK_AND_REF_PTRS(GlfSimpleLightingContext);
+TF_DECLARE_REF_PTRS(HdNoticeBatchingSceneIndex);
 TF_DECLARE_REF_PTRS(UsdImagingStageSceneIndex);
 TF_DECLARE_REF_PTRS(UsdImagingRootOverridesSceneIndex);
 TF_DECLARE_REF_PTRS(UsdImagingSelectionSceneIndex);
 TF_DECLARE_REF_PTRS(HdsiLegacyDisplayStyleOverrideSceneIndex);
-TF_DECLARE_REF_PTRS(HdsiPrimTypePruningSceneIndex);
+TF_DECLARE_REF_PTRS(HdsiPrimTypeAndPathPruningSceneIndex);
 TF_DECLARE_REF_PTRS(HdsiSceneGlobalsSceneIndex);
 TF_DECLARE_REF_PTRS(HdSceneIndexBase);
+TF_DECLARE_REF_PTRS(HdxTaskControllerSceneIndex);
 
 using UsdStageWeakPtr = TfWeakPtr<class UsdStage>;
 
@@ -103,6 +105,9 @@ public:
         /// scene indices that asynchronous processing is allowow. Applications
         /// should perodically call PollForAsynchronousUpdates on the engine.
         bool allowAsynchronousSceneProcessing = false;
+        /// \p enableUsdDrawModes enables the UsdGeomModelAPI draw mode
+        /// feature.
+        bool enableUsdDrawModes = true;
     };
 
     // ---------------------------------------------------------------------
@@ -134,9 +139,10 @@ public:
                                         SdfPath::AbsoluteRootPath(),
                        const HdDriver& driver = HdDriver(),
                        const TfToken& rendererPluginId = TfToken(),
-                       bool gpuEnabled = true,
-                       bool displayUnloadedPrimsWithBounds = false,
-                       bool allowAsynchronousSceneProcessing = false);
+                       const bool gpuEnabled = true,
+                       const bool displayUnloadedPrimsWithBounds = false,
+                       const bool allowAsynchronousSceneProcessing = false,
+                       const bool enableUsdDrawModes = true);
 
     // Disallow copies
     UsdImagingGLEngine(const UsdImagingGLEngine&) = delete;
@@ -411,9 +417,15 @@ public:
     USDIMAGINGGL_API
     static TfTokenVector GetRendererPlugins();
 
-    /// Return the user-friendly description of a renderer plugin.
+    /// Return the user-friendly name of a renderer plugin.
     USDIMAGINGGL_API
     static std::string GetRendererDisplayName(TfToken const &id);
+
+    /// Return the user-friendly name of the Hgi implementation.
+    /// For example: OpenGL, Metal, Vulkan. This is only available
+    /// if a render plugin was set and it uses Hgi.
+    USDIMAGINGGL_API
+    std::string GetRendererHgiDisplayName() const;
 
     /// Return if the GPU is enabled and can be used for any rendering tasks.
     USDIMAGINGGL_API
@@ -481,6 +493,21 @@ public:
     /// @{
     // ---------------------------------------------------------------------
 
+    /// Returns the active render pass prim path by querying the terminal scene
+    /// index. Returns an empty path if none was found. 
+    USDIMAGINGGL_API
+    SdfPath GetActiveRenderPassPrimPath() const;
+
+    /// Returns the active render settings prim path by querying the terminal
+    /// scene index. Returns an empty path if none was found.
+    USDIMAGINGGL_API
+    SdfPath GetActiveRenderSettingsPrimPath() const;
+
+    /// Utility method to query available render settings prims.
+    USDIMAGINGGL_API
+    static SdfPathVector
+    GetAvailableRenderSettingsPrimPaths(UsdPrim const &root);
+
     /// Set active render pass prim to use to drive rendering.
     USDIMAGINGGL_API
     void SetActiveRenderPassPrimPath(SdfPath const &);
@@ -489,10 +516,6 @@ public:
     USDIMAGINGGL_API
     void SetActiveRenderSettingsPrimPath(SdfPath const &);
 
-    /// Utility method to query available render settings prims.
-    USDIMAGINGGL_API
-    static SdfPathVector
-    GetAvailableRenderSettingsPrimPaths(UsdPrim const &root);
 
     /// @}
 
@@ -665,7 +688,7 @@ protected:
 
     USDIMAGINGGL_API
     void _Execute(const UsdImagingGLRenderParams &params,
-                  HdTaskSharedPtrVector tasks);
+                  const SdfPathVector &taskPaths);
 
     USDIMAGINGGL_API
     bool _CanPrepare(const UsdPrim& root);
@@ -718,6 +741,9 @@ protected:
     void _SetRenderDelegate(HdPluginRenderDelegateUniqueHandle &&);
 
     USDIMAGINGGL_API
+    SdfPath _ComputeControllerPath(const TfToken &pluginId);
+
+    USDIMAGINGGL_API
     SdfPath _ComputeControllerPath(const HdPluginRenderDelegateUniqueHandle &);
 
     USDIMAGINGGL_API
@@ -734,11 +760,17 @@ protected:
     USDIMAGINGGL_API
     HdEngine *_GetHdEngine();
 
+    /// \deprecated The HdxTaskController is replaced by the
+    ///             HdxTaskControllerSceneIndex.
     USDIMAGINGGL_API
     HdxTaskController *_GetTaskController() const;
 
     USDIMAGINGGL_API
     HdSelectionSharedPtr _GetSelection() const;
+
+    // Create UsdImagingStageSceneIndex and subsequent scene indices.
+    void
+    _CreateUsdImagingSceneIndices();
 
 protected:
 
@@ -761,6 +793,7 @@ protected:
     SdfPath const _sceneDelegateId;
 
     std::unique_ptr<HdxTaskController> _taskController;
+    HdxTaskControllerSceneIndexRefPtr _taskControllerSceneIndex;
 
     HdxSelectionTrackerSharedPtr _selTracker;
     HdRprimCollection _renderCollection;
@@ -778,24 +811,13 @@ protected:
     bool _isPopulated;
 
 private:
-    // Registers app-managed scene indices with the scene index plugin registry.
-    // This needs to be called once *before* the render index is constructed.
-    static void _RegisterApplicationSceneIndices();
-
-    // Creates and returns the scene globals scene index. This callback is
-    // registered prior to render index construction and is invoked during
-    // render index construction via
-    // HdSceneIndexPluginRegistry::AppendSceneIndicesForRenderer(..).
-    static HdSceneIndexBaseRefPtr
-    _AppendSceneGlobalsSceneIndexCallback(
-        const std::string &renderInstanceId,
-        const HdSceneIndexBaseRefPtr &inputScene,
-        const HdContainerDataSourceHandle &inputArgs);
+    bool _HasRenderer() const;
+    HdSceneIndexBaseRefPtr _GetTerminalSceneIndex() const;
 
     HdSceneIndexBaseRefPtr
     _AppendOverridesSceneIndices(
         const HdSceneIndexBaseRefPtr &inputScene);
-    
+
     UsdImagingGLEngine_Impl::_AppSceneIndicesSharedPtr _appSceneIndices;
 
     void _DestroyHydraObjects();
@@ -803,18 +825,21 @@ private:
     // Note that we'll only ever use one of _sceneIndex/_sceneDelegate
     // at a time.
     UsdImagingStageSceneIndexRefPtr _stageSceneIndex;
+    HdNoticeBatchingSceneIndexRefPtr _postInstancingNoticeBatchingSceneIndex;
     UsdImagingSelectionSceneIndexRefPtr _selectionSceneIndex;
     UsdImagingRootOverridesSceneIndexRefPtr _rootOverridesSceneIndex;
     HdsiLegacyDisplayStyleOverrideSceneIndexRefPtr _displayStyleSceneIndex;
-    HdsiPrimTypePruningSceneIndexRefPtr _materialPruningSceneIndex;
-    HdsiPrimTypePruningSceneIndexRefPtr _lightPruningSceneIndex;
+    HdsiPrimTypeAndPathPruningSceneIndexRefPtr _lightPruningSceneIndex;
+    // State of the _lightPruningSceneIndex.
+    bool _lightPruningSceneIndexEnableSceneLights;
     HdSceneIndexBaseRefPtr _sceneIndex;
-    
+
     std::unique_ptr<UsdImagingDelegate> _sceneDelegate;
 
     std::unique_ptr<HdEngine> _engine;
 
     bool _allowAsynchronousSceneProcessing = false;
+    bool _enableUsdDrawModes = true;
 };
 
 

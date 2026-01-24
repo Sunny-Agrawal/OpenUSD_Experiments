@@ -12,7 +12,14 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 TF_WRAP_MODULE
 {
-    TF_WRAP( ShaderProperty );
+    TF_WRAP( Declare );
+    TF_WRAP( DiscoveryPlugin );
+    TF_WRAP( FilesystemDiscovery );
+    TF_WRAP( FilesystemDiscoveryHelpers );
+    TF_WRAP( SdfTypeIndicator );
+    TF_WRAP( ShaderMetadataHelpers );
     TF_WRAP( ShaderNode );
+    TF_WRAP( ShaderNodeDiscoveryResult );
+    TF_WRAP( ShaderProperty );
     TF_WRAP( Registry );
 }

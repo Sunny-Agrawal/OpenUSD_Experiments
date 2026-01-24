@@ -246,10 +246,11 @@ _textureTypeTable[HgiTextureTypeCount][2] =
     {HgiTextureType1D,      VK_IMAGE_TYPE_1D},
     {HgiTextureType2D,      VK_IMAGE_TYPE_2D},
     {HgiTextureType3D,      VK_IMAGE_TYPE_3D},
+    {HgiTextureTypeCubemap, VK_IMAGE_TYPE_2D},
     {HgiTextureType1DArray, VK_IMAGE_TYPE_1D},
     {HgiTextureType2DArray, VK_IMAGE_TYPE_2D}
 };
-static_assert(HgiTextureTypeCount==5, "");
+static_assert(HgiTextureTypeCount==6, "");
 
 static const uint32_t
 _textureViewTypeTable[HgiTextureTypeCount][2] =
@@ -257,10 +258,11 @@ _textureViewTypeTable[HgiTextureTypeCount][2] =
     {HgiTextureType1D,      VK_IMAGE_VIEW_TYPE_1D},
     {HgiTextureType2D,      VK_IMAGE_VIEW_TYPE_2D},
     {HgiTextureType3D,      VK_IMAGE_VIEW_TYPE_3D},
+    {HgiTextureTypeCubemap, VK_IMAGE_VIEW_TYPE_CUBE},
     {HgiTextureType1DArray, VK_IMAGE_VIEW_TYPE_1D_ARRAY},
     {HgiTextureType2DArray, VK_IMAGE_VIEW_TYPE_2D_ARRAY}
 };
-static_assert(HgiTextureTypeCount==5, "");
+static_assert(HgiTextureTypeCount==6, "");
 
 static const uint32_t
 _samplerAddressModeTable[HgiSamplerAddressModeCount][2] =
@@ -375,8 +377,12 @@ HgiVulkanConversions::GetFormat(HgiFormat inFormat, bool depthFormat)
 
     // Special case for float32 depth format not properly handled by
     // _FormatTable
-    if (depthFormat && inFormat == HgiFormatFloat32) {
-        vkFormat = VK_FORMAT_D32_SFLOAT;
+    if (depthFormat) {
+        if (inFormat == HgiFormatFloat32) {
+            vkFormat = VK_FORMAT_D32_SFLOAT;
+        } else if (inFormat == HgiFormatFloat32UInt8) {
+            vkFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
+        }
     }
 
     return vkFormat;

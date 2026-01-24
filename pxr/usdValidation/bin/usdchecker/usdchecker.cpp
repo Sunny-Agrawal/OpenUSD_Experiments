@@ -15,6 +15,7 @@
 #include "pxr/usd/usd/editContext.h"
 #include "pxr/usd/usd/variantSets.h"
 #include "pxr/usdValidation/usdValidation/context.h"
+#include "pxr/usdValidation/usdValidation/fixer.h"
 #include "pxr/usdValidation/usdValidation/registry.h"
 #include "pxr/usdValidation/usdValidation/validatorTokens.h"
 #include "pxr/usdValidation/usdUtilsValidators/validatorTokens.h"
@@ -61,7 +62,7 @@ struct Args {
     bool dumpRules = false;
     bool verbose = false;
     bool strict = false;
-    bool useNewValidationFramework = false;
+    bool useOldComplianceCheckerInterface = false;
 };
 
 static
@@ -73,66 +74,71 @@ _Configure(CLI::App* app, Args& args) {
         ->type_name("FILE");
     app->add_flag(
         "-s, --skipVariants", args.skipVariants, 
-        "If specified, only the prims that are present in the default (i.e. "
-        "selected) variants are checked. When this option is not specified, "
-        "prims in all possible combinations of variant selections are "
+        "If specified, only the prims that are present in the default (i.e.\n"
+        "selected) variants are checked. When this option is not specified,\n"
+        "prims in all possible combinations of variant selections are\n"
         "checked.");
     app->add_flag(
         "-p, --rootPackageOnly", args.rootPackageOnly, 
-        "Check only the specified package. Nested packages, dependencies and "
+        "Check only the specified package. Nested packages, dependencies and\n"
         "their contents are not validated.");
     app->add_option(
         "-o, --out", args.outFile, 
-        "The file to which all the failed checks are output. If unspecified, "
-        "the failed checks are output to stdout; if \"stderr\", terminal "
+        "The file to which all the failed checks are output. If unspecified,\n"
+        "the failed checks are output to stdout; if \"stderr\", terminal\n"
         "coloring will be suppressed.")
         ->type_name("FILE");
     app->add_flag(
         "--noAssetChecks", args.noAssetChecks, 
-        "If specified, do NOT perform extra checks to help ensure the stage or "
-        "package can be easily and safely referenced into aggregate stages.");
+        "If specified, do NOT perform extra checks to help ensure the stage\n"
+        "or package can be easily and safely referenced into aggregate stages.");
     app->add_flag(
         "--arkit", args.arkit, 
-        "Check if the given USD stage is compatible with RealityKit's "
-        "implementation of USDZ as of 2023. These assets operate under greater "
-        "constraints that usdz files for more general in-house uses, and this "
-        "option attempts to ensure that these constraints are met.");
+        "Check if the given USD stage is compatible with RealityKit's\n"
+        "implementation of USDZ as of 2023. These assets operate under\n"
+        "greater constraints that usdz files for more general in-house uses,\n"
+        "and this option attempts to ensure that these constraints are met.");
     app->add_flag(
-        "-d, --dumpRules", args.dumpRules, "Dump the enumerated set of rules "
+        "-d, --dumpRules", args.dumpRules, "Dump the enumerated set of rules\n"
         "being checked for the given set of options.");
     app->add_flag(
         "-v, --verbose", args.verbose, 
         "Enable verbose output mode.");
     app->add_flag(
         "-t, --strict", args.strict, 
-        "Return failure code even if only warnings are issued, for stricter "
+        "Return failure code even if only warnings are issued, for stricter\n"
         "compliance.");
     app->add_flag(
-        "--useNewValidationFramework", args.useNewValidationFramework, 
-        "Enable the new validation framework.");
+        "--useNewValidationFramework",
+        "Default behavior, this option is IGNORED but retained to avoid client "
+        "code breakage.")->group("");
+    app->add_flag(
+        "--useOldComplianceCheckerInterface", 
+        args.useOldComplianceCheckerInterface, 
+        "Use the old and now deprecated Compliance Checker interface.");
     app->add_option(
         "--variantSets", args.variantSets,
-        "List of variantSets to validate. All variants for the given "
-        "variantSets are validated. This can also be used with --variants to "
-        "validate the given variants in combination with variants from the "
-        "explicitly specified variantSets. This option is only valid when "
+        "List of variantSets to validate. All variants for the given\n"
+        "variantSets are validated. This can also be used with --variants to\n"
+        "validate the given variants in combination with variants from the\n"
+        "explicitly specified variantSets. This option is only valid when\n"
         "using the new validation framework.");
     app->add_option(
         "--variants", args.variants, 
-        "List of ',' separated variantSet:variant pairs to validate. Each set "
-        "of variants in the list are validated separately. Example: "
-        "--variants foo:bar,baz:qux will validate foo:bar and baz:qux together "
-        "but --variants foo:bar --variants baz:qux will validate foo:bar and "
-        "baz:qux separately. This can also be used with --variantSets to "
-        "validate the given variants in combination with variants from the "
-        "explicitly specified variantSets. This option is only valid when "
-        "using the new validation framework.");
+        "List of ',' separated variantSet:variant pairs to validate. Each set\n"
+        "of variants in the list are validated separately. Example:\n"
+        "--variants foo:bar,baz:qux will validate foo:bar and baz:qux\n"
+        "together but --variants foo:bar --variants baz:qux will validate\n"
+        "foo:bar and baz:qux separately. This can also be used with\n"
+        "--variantSets to validate the given variants in combination with\n"
+        "varuants from the explicitly specified variantSets. This option is\n"
+        "only valid when using the new validation framework.");
     app->add_flag(
         "--disableVariantValidationLimit", args.disableVariantValidationLimit,
-        "Disable the limit set to restrict the number of variants validation "
-        "calls. This is useful when the number of variants is large and we "
-        "want to validate all possible combinations of variants. Default is to "
-        "limit the number of validation calls to 1000. This option is only "
+        "Disable the limit set to restrict the number of variants validation\n"
+        "calls. This is useful when the number of variants is large and we\n"
+        "want to validate all possible combinations of variants. Default is\n"
+        "to limit the number of validation calls to 1000. This option is only\n"
         "valid when using the new validation framework.");
 }
 
@@ -153,15 +159,15 @@ _ValidateArgs(const Args& args) {
     }
 
     // variants option is only valid when using new validation framework.
-    if (!args.variants.empty() && !args.useNewValidationFramework) {
+    if (!args.variants.empty() && args.useOldComplianceCheckerInterface) {
         std::cerr<<"Error: The --variants option is only valid when using the "
-            "--useNewValidationFramework option."<<"\n";
+            "new ValidationFramework."<<"\n";
         return false;
     }
 
-    if (!args.variantSets.empty() && !args.useNewValidationFramework) {
+    if (!args.variantSets.empty() && args.useOldComplianceCheckerInterface) {
         std::cerr<<"Error: The --variantSets option is only valid when using "
-            "the --useNewValidationFramework option."<<"\n";
+            "the new ValidationFramework."<<"\n";
         return false;
     }
 
@@ -217,6 +223,25 @@ _ReportValidationErrors(
             case UsdValidationErrorType::Error:
                 reportFailure = true;
                 _PrintMessage(output, error.GetErrorAsString(), _ErrorColor);
+                if (!error.GetFixers().empty()) {
+                    _PrintMessage(
+                        output, 
+                        "\tPossible Fixes which can be applied:", _InfoColor);
+                    for (const UsdValidationFixer *fixer : error.GetFixers()) {
+                        if (fixer->CanApplyFix(
+                                error, UsdEditTarget(
+                                error.GetSites()[0].GetStage()->GetRootLayer()),
+                                UsdTimeCode::Default())) {
+                            _PrintMessage(
+                                output, 
+                                TfStringPrintf(
+                                    "\t- %s: %s.", 
+                                    fixer->GetName().GetText(), 
+                                    fixer->GetDescription().c_str()),
+                                _InfoColor);
+                        }
+                    }
+                }
                 break;
             case UsdValidationErrorType::Warn:
                 if (strict) {
@@ -540,7 +565,7 @@ _UsdChecker(const Args& args)
         return 1;
     }
 
-    if (args.useNewValidationFramework) {
+    if (!args.useOldComplianceCheckerInterface) {
         UsdValidationRegistry &validationReg = 
             UsdValidationRegistry::GetInstance();
         UsdValidationValidatorMetadataVector metadata = 
@@ -671,7 +696,7 @@ _UsdChecker(const Args& args)
 
     std::cerr<<"usdchecker using UsdUtilsComplianceChecker requires Python "
         "support to be enabled in the build of USD. Its recommended to use "
-        "--useNewValidationFramework which doesn't require any python "
+        "the new ValidationFramework which doesn't require any python "
         "support.\n";
     return 1;
 
@@ -786,8 +811,8 @@ main(int argc, char const *argv[]) {
         "attribute is checked, currently.  General USD checks are always "
         "performed, and more restrictive checks targeted at distributable "
         "consumer content are also applied when the \"--arkit\" option is "
-        "specified. In order to use the new validation framework provide the "
-        "'--useNewValidationFramework' option.");
+        "specified. In order to use the old compliance checker (deprecated) "
+        "provide the '--useOldComplianceCheckerInterface' option.");
 
     Args args;
     _Configure(&app, args);

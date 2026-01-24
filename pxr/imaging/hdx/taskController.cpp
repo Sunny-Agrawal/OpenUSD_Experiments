@@ -27,6 +27,7 @@
 #include "pxr/imaging/hdx/simpleLightTask.h"
 #include "pxr/imaging/hdx/skydomeTask.h"
 #include "pxr/imaging/hdx/shadowTask.h"
+#include "pxr/imaging/hdx/taskControllerSceneIndex.h"
 #include "pxr/imaging/hdx/visualizeAovTask.h"
 
 #include "pxr/imaging/hdSt/renderDelegate.h"
@@ -72,9 +73,6 @@ TF_DEFINE_PRIVATE_TOKENS(
     (PxrDistantLight)
     (PxrDomeLight)
 );
-
-// XXX: WBN to expose this to the application.
-static const uint32_t MSAA_SAMPLE_COUNT = 4;
 
 // Distant Light values
 static const float DISTANT_LIGHT_ANGLE = 0.53;
@@ -162,11 +160,7 @@ HdxTaskController::_Delegate::GetTaskRenderTags(SdfPath const& taskId)
 static bool
 _IsStormRenderingBackend(HdRenderIndex const *index)
 {
-    if(!dynamic_cast<HdStRenderDelegate*>(index->GetRenderDelegate())) {
-        return false;
-    }
-
-    return true;
+    return bool(dynamic_cast<HdStRenderDelegate*>(index->GetRenderDelegate()));
 }
 
 static GfVec2i
@@ -357,8 +351,9 @@ HdxTaskController::_CreateRenderTask(TfToken const& materialTag)
 }
 
 void
-HdxTaskController::_SetBlendStateForMaterialTag(TfToken const& materialTag,
-                                        HdxRenderTaskParams *renderParams) const
+HdxTaskController::_SetBlendStateForMaterialTag(
+    TfToken const& materialTag,
+    HdxRenderTaskParams *renderParams) const
 {
     if (!TF_VERIFY(renderParams)) {
         return;
@@ -638,24 +633,13 @@ HdxTaskController::_ShadowsEnabled() const
 bool
 HdxTaskController::_SelectionEnabled() const
 {
-    if (_renderTaskIds.empty())
-        return false;
-
-    const HdxRenderTaskParams& renderTaskParams =
-        _delegate.GetParameter<HdxRenderTaskParams>(
-            _renderTaskIds.front(), HdTokens->params);
-
-    // Disable selection highlighting when we're rendering ID buffers.
-    return !renderTaskParams.enableIdRender;
+    return !_renderTaskIds.empty();
 }
 
 bool
 HdxTaskController::_ColorizeSelectionEnabled() const
 {
-    if (_viewportAov == HdAovTokens->color) {
-        return true;
-    }
-    return false;
+    return _viewportAov == HdAovTokens->color;
 }
 
 bool
@@ -678,10 +662,7 @@ bool
 HdxTaskController::_VisualizeAovEnabled() const
 {
     // Only non-color AOVs need special colorization for viz.
-    if (_viewportAov != HdAovTokens->color) {
-        return true;
-    }
-    return false;
+    return _viewportAov != HdAovTokens->color;
 }
 
 bool
@@ -697,11 +678,18 @@ HdxTaskController::_UsingAovs() const
     return !_aovBufferIds.empty();
 }
 
-HdTaskSharedPtrVector const
-HdxTaskController::GetRenderingTasks() const
+static
+void
+_AddIfNonEmpty(const SdfPath &path, SdfPathVector * const paths)
 {
-    HdTaskSharedPtrVector tasks;
+    if (!path.IsEmpty()) {
+        paths->push_back(path);
+    }
+}
 
+SdfPathVector
+HdxTaskController::GetRenderingTaskPaths() const
+{
     /* The superset of tasks we can run, in order, is:
      * - simpleLightTaskId
      * - shadowTaskId
@@ -721,84 +709,102 @@ HdxTaskController::GetRenderingTasks() const
      * See _CreateRenderGraph for more details.
      */
 
-    if (!_simpleLightTaskId.IsEmpty()) {
-        tasks.push_back(GetRenderIndex()->GetTask(_simpleLightTaskId));
-    }
-
+    SdfPathVector paths;
+    
+    _AddIfNonEmpty(_simpleLightTaskId, &paths);
     if (!_shadowTaskId.IsEmpty() && _ShadowsEnabled()) {
-        tasks.push_back(GetRenderIndex()->GetTask(_shadowTaskId));
+        paths.push_back(_shadowTaskId);
     }
 
     // Perform draw calls
     if (!_renderTaskIds.empty()) {
-        SdfPath volumeId = _GetRenderTaskPath(HdStMaterialTagTokens->volume);
+        const SdfPath volumeId =
+            _GetRenderTaskPath(HdStMaterialTagTokens->volume);
 
+        bool hasVolume = false;
+        
         // Render opaque prims, additive and translucent blended prims.
         // Skip volume prims, because volume rendering reads from the depth
         // buffer so we must resolve depth first first.
-        for (SdfPath const& id : _renderTaskIds) {
-            if (id != volumeId) {
-                tasks.push_back(GetRenderIndex()->GetTask(id));
+        for (const SdfPath &id : _renderTaskIds) {
+            if (id == volumeId) {
+                hasVolume = true;
+                continue;
             }
+            paths.push_back(id);
         }
 
         // Take the aov results from the render tasks, resolve the multisample
         // images and put the results into gpu textures onto shared context.
-        if (!_aovInputTaskId.IsEmpty()) {
-            tasks.push_back(GetRenderIndex()->GetTask(_aovInputTaskId));
-        }
+        _AddIfNonEmpty(_aovInputTaskId, &paths);
 
-        if (!_boundingBoxTaskId.IsEmpty()) {
-            tasks.push_back(GetRenderIndex()->GetTask(_boundingBoxTaskId));
-        }
+        _AddIfNonEmpty(_boundingBoxTaskId, &paths);
 
         // Render volume prims
-        if (std::find(_renderTaskIds.begin(), _renderTaskIds.end(), volumeId) 
-                != _renderTaskIds.end()) {
-            tasks.push_back(GetRenderIndex()->GetTask(volumeId));
+        if (hasVolume) {
+            paths.push_back(volumeId);
         }
     }
 
     // Merge translucent and volume pixels into color target
-    if (!_oitResolveTaskId.IsEmpty()) {
-        tasks.push_back(GetRenderIndex()->GetTask(_oitResolveTaskId));
-    }
+    _AddIfNonEmpty(_oitResolveTaskId, &paths);
 
     if (!_selectionTaskId.IsEmpty() && _SelectionEnabled()) {
-        tasks.push_back(GetRenderIndex()->GetTask(_selectionTaskId));
+        paths.push_back(_selectionTaskId);
     }
 
     if (!_colorizeSelectionTaskId.IsEmpty() && _ColorizeSelectionEnabled()) {
-        tasks.push_back(GetRenderIndex()->GetTask(_colorizeSelectionTaskId));
+        paths.push_back(_colorizeSelectionTaskId);
     }
 
     // Apply color correction / grading (convert to display colors)
     if (_ColorCorrectionEnabled()) {
-        tasks.push_back(GetRenderIndex()->GetTask(_colorCorrectionTaskId));
+        paths.push_back(_colorCorrectionTaskId);
     }
 
     if (!_visualizeAovTaskId.IsEmpty() && _VisualizeAovEnabled()) {
-        tasks.push_back(GetRenderIndex()->GetTask(_visualizeAovTaskId));
+        paths.push_back(_visualizeAovTaskId);
     }
 
     // Render pixels to screen
-    if (!_presentTaskId.IsEmpty()) {
-        tasks.push_back(GetRenderIndex()->GetTask(_presentTaskId));
-    }
+    _AddIfNonEmpty(_presentTaskId, &paths);
 
+    return paths;
+}
+
+SdfPathVector
+HdxTaskController::GetPickingTaskPaths() const
+{
+    SdfPathVector paths;
+    _AddIfNonEmpty(_pickTaskId, &paths);
+    _AddIfNonEmpty(_pickFromRenderBufferTaskId, &paths);
+    return paths;
+}
+
+static
+HdTaskSharedPtrVector
+_GetTasks(
+    const HdRenderIndex * const renderIndex,
+    const SdfPathVector &paths)
+{
+    HdTaskSharedPtrVector tasks;
+    tasks.reserve(paths.size());
+    for (const SdfPath &path : paths) {
+        tasks.push_back(renderIndex->GetTask(path));
+    }
     return tasks;
 }
 
-HdTaskSharedPtrVector const
+HdTaskSharedPtrVector
+HdxTaskController::GetRenderingTasks() const
+{
+    return _GetTasks(GetRenderIndex(), GetRenderingTaskPaths());
+}
+
+HdTaskSharedPtrVector
 HdxTaskController::GetPickingTasks() const
 {
-    HdTaskSharedPtrVector tasks;
-    if (!_pickTaskId.IsEmpty())
-        tasks.push_back(GetRenderIndex()->GetTask(_pickTaskId));
-    if (!_pickFromRenderBufferTaskId.IsEmpty())
-        tasks.push_back(GetRenderIndex()->GetTask(_pickFromRenderBufferTaskId));
-
-    return tasks;
+    return _GetTasks(GetRenderIndex(), GetPickingTaskPaths());
 }
 
 SdfPath
@@ -975,6 +981,81 @@ HdxTaskController::_ReplaceLightSprim(size_t const& pathIdx,
                                                 HdLight::AllDirty);
 }
 
+// When we're asked to render "color", we treat that as final color,
+// complete with depth-compositing and selection, so we in-line add
+// some extra buffers if they weren't already requested.
+static
+TfTokenVector
+_ResolvedRenderOutputs(const TfTokenVector &aovNames,
+                       const bool isForStorm)
+{
+    bool hasColor = false;
+    bool hasDepth = false;
+    bool hasPrimId = false;
+    bool hasElementId = false;
+    bool hasInstanceId = false;
+    bool hasNeye = false;
+
+    for (const TfToken &renderOutput : aovNames) {
+        if (renderOutput == HdAovTokens->color) {
+            hasColor = true;
+        } else if (renderOutput == HdAovTokens->depth) {
+            hasDepth = true;
+        } else if (renderOutput == HdAovTokens->primId) {
+            hasPrimId = true;
+        }else if (renderOutput == HdAovTokens->elementId) {
+            hasElementId = true;
+        } else if (renderOutput == HdAovTokens->instanceId) {
+            hasInstanceId = true;
+        } else if (renderOutput == HdAovTokens->Neye) {
+            hasNeye = true;
+        }
+    }
+
+    TfTokenVector result;
+
+    if (isForStorm) {
+        // For Storm, we rearrange AOVs to be a certain order to match how we 
+        // order outputs in the fragment shader. This order is specified via 
+        // HdSt_RenderPassShaderKey and the render pass shader snippets it 
+        // gathers.
+        if (hasColor) {
+            result.push_back(HdAovTokens->color);
+        }
+        if (hasPrimId || hasInstanceId) {
+            result.push_back(HdAovTokens->primId);
+            result.push_back(HdAovTokens->instanceId);
+        }
+        if (hasNeye) {
+            result.push_back(HdAovTokens->Neye);
+        }
+
+        // Even if not requested, add depth.
+        result.push_back(HdAovTokens->depth);
+    } else {
+        result = aovNames;
+
+        // For a backend like PrMan/Embree we fill not just the color buffer,
+        // but also buffers that are used during picking.
+        if (hasColor) {
+            if (!hasDepth) {
+                result.push_back(HdAovTokens->depth);
+            }
+            if (!hasPrimId) {
+                result.push_back(HdAovTokens->primId);
+            }
+            if (!hasElementId) {
+                result.push_back(HdAovTokens->elementId);
+            }
+            if (!hasInstanceId) {
+                result.push_back(HdAovTokens->instanceId);
+            }
+        }
+    }
+
+    return result;
+}
+
 void
 HdxTaskController::SetRenderOutputs(TfTokenVector const& outputs)
 {
@@ -987,43 +1068,8 @@ HdxTaskController::SetRenderOutputs(TfTokenVector const& outputs)
     }
     _aovOutputs = outputs;
 
-    TfTokenVector localOutputs = outputs;
-
-    // When we're asked to render "color", we treat that as final color,
-    // complete with depth-compositing and selection, so we in-line add
-    // some extra buffers if they weren't already requested.
-    if (_IsStormRenderingBackend(GetRenderIndex())) {
-        if (std::find(localOutputs.begin(), 
-                      localOutputs.end(),
-                      HdAovTokens->depth) == localOutputs.end()) {
-            localOutputs.push_back(HdAovTokens->depth);
-        }
-    } else {
-        std::set<TfToken> mainRenderTokens;
-        for (auto const& aov : outputs) {
-            if (aov == HdAovTokens->color || aov == HdAovTokens->depth ||
-                aov == HdAovTokens->primId || aov == HdAovTokens->instanceId ||
-                aov == HdAovTokens->elementId) {
-                mainRenderTokens.insert(aov);
-            }
-        }
-        // For a backend like PrMan/Embree we fill not just the color buffer,
-        // but also buffers that are used during picking.
-        if (mainRenderTokens.count(HdAovTokens->color) > 0) {
-            if (mainRenderTokens.count(HdAovTokens->depth) == 0) {
-                localOutputs.push_back(HdAovTokens->depth);
-            }
-            if (mainRenderTokens.count(HdAovTokens->primId) == 0) {
-                localOutputs.push_back(HdAovTokens->primId);
-            }
-            if (mainRenderTokens.count(HdAovTokens->elementId) == 0) {
-                localOutputs.push_back(HdAovTokens->elementId);
-            }
-            if (mainRenderTokens.count(HdAovTokens->instanceId) == 0) {
-                localOutputs.push_back(HdAovTokens->instanceId);
-            }
-        }
-    }
+    TfTokenVector localOutputs = _ResolvedRenderOutputs(outputs,
+        _IsStormRenderingBackend(GetRenderIndex()));
 
     // Delete the old renderbuffers.
     for (size_t i = 0; i < _aovBufferIds.size(); ++i) {
@@ -1055,6 +1101,8 @@ HdxTaskController::SetRenderOutputs(TfTokenVector const& outputs)
         }
     }
 
+    const uint32_t msaaSampleCount =
+        std::clamp(TfGetEnvSetting(HDX_MSAA_SAMPLE_COUNT), 1, 16);
     // Add the new renderbuffers. _GetAovPath returns ids of the form
     // {controller_id}/aov_{name}.
     for (size_t i = 0; i < localOutputs.size(); ++i) {
@@ -1064,11 +1112,15 @@ HdxTaskController::SetRenderOutputs(TfTokenVector const& outputs)
         HdRenderBufferDescriptor desc;
         desc.dimensions = dimensions3;
         desc.format = outputDescs[i].format;
-        desc.multiSampled = outputDescs[i].multiSampled;
+        if (msaaSampleCount > 1) {
+            desc.multiSampled = outputDescs[i].multiSampled;
+        } else {
+            desc.multiSampled = false;
+        }
         _delegate.SetParameter(aovId, _tokens->renderBufferDescriptor,desc);
         _delegate.SetParameter(aovId,
                                HdStRenderBufferTokens->stormMsaaSampleCount,
-                               MSAA_SAMPLE_COUNT);
+                               msaaSampleCount);
         GetRenderIndex()->GetChangeTracker().MarkBprimDirty(aovId,
             HdRenderBuffer::DirtyDescription);
         _aovBufferIds.push_back(aovId);
@@ -1431,11 +1483,8 @@ HdxTaskController::SetRenderParams(HdxRenderTaskParams const& params)
         mergedParams.resolveAovMultiSample = oldParams.resolveAovMultiSample;
 
         // We also explicitly manage blend params, based on the material tag.
-        // XXX: Note: if params.enableIdRender is set, we want to use default
-        // blend params so that we don't try to additive blend ID buffers...
         _SetBlendStateForMaterialTag(
-            params.enableIdRender ? TfToken() : collection.GetMaterialTag(),
-            &mergedParams);
+            collection.GetMaterialTag(), &mergedParams);
 
         if (mergedParams != oldParams) {
             _delegate.SetParameter(renderTaskId,
@@ -1445,32 +1494,15 @@ HdxTaskController::SetRenderParams(HdxRenderTaskParams const& params)
         }
     }
 
-    // Update shadow task in case materials have been enabled/disabled
-    if (!_shadowTaskId.IsEmpty()) {
-        HdxShadowTaskParams oldShParams = 
-            _delegate.GetParameter<HdxShadowTaskParams>(
-                _shadowTaskId, HdTokens->params);
-
-        if (oldShParams.enableSceneMaterials != params.enableSceneMaterials) {
-            oldShParams.enableSceneMaterials = params.enableSceneMaterials;
-            _delegate.SetParameter(_shadowTaskId, 
-                HdTokens->params, oldShParams);
-            GetRenderIndex()->GetChangeTracker().MarkTaskDirty(
-                _shadowTaskId, HdChangeTracker::DirtyParams);
-        }
-    }
-
     // Update pick task
     if (!_pickTaskId.IsEmpty()) {
         HdxPickTaskParams pickParams =
             _delegate.GetParameter<HdxPickTaskParams>(
                 _pickTaskId, HdTokens->params);
         
-        if (pickParams.cullStyle != params.cullStyle ||
-            pickParams.enableSceneMaterials != params.enableSceneMaterials) {
+        if (pickParams.cullStyle != params.cullStyle) {
 
             pickParams.cullStyle = params.cullStyle;
-            pickParams.enableSceneMaterials = params.enableSceneMaterials;
 
             _delegate.SetParameter(_pickTaskId, HdTokens->params, pickParams);
             GetRenderIndex()->GetChangeTracker().MarkTaskDirty(
@@ -1519,11 +1551,8 @@ HdxTaskController::SetShadowParams(HdxShadowTaskParams const& params)
         _delegate.GetParameter<HdxShadowTaskParams>(
             _shadowTaskId, HdTokens->params);
 
-    HdxShadowTaskParams mergedParams = params;
-    mergedParams.enableSceneMaterials = oldParams.enableSceneMaterials;
-
-    if (mergedParams != oldParams) {
-        _delegate.SetParameter(_shadowTaskId, HdTokens->params, mergedParams);
+    if (params != oldParams) {
+        _delegate.SetParameter(_shadowTaskId, HdTokens->params, params);
         GetRenderIndex()->GetChangeTracker().MarkTaskDirty(
             _shadowTaskId, HdChangeTracker::DirtyParams);
     }

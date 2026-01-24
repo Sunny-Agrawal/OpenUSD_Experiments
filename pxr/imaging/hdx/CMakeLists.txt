@@ -63,9 +63,11 @@ pxr_library(hdx
         selectionTracker
         shadowTask
         simpleLightTask
+        stormCheck
         skydomeTask
         task
         taskController
+        taskControllerSceneIndex
         tokens
         types
         visualizeAovTask
@@ -94,7 +96,6 @@ pxr_library(hdx
         shaders/renderPassColorShader.glslfx
         shaders/renderPassColorAndSelectionShader.glslfx
         shaders/renderPassColorWithOccludedSelectionShader.glslfx
-        shaders/renderPassIdShader.glslfx
         shaders/renderPassPickingShader.glslfx
         shaders/renderPassOitShader.glslfx
         shaders/renderPassOitOpaqueShader.glslfx

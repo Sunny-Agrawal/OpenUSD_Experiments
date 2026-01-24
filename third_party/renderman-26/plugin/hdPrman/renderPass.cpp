@@ -13,6 +13,7 @@
 #include "hdPrman/renderBuffer.h"
 #include "hdPrman/renderDelegate.h"
 #include "hdPrman/renderParam.h"
+#include "hdPrman/tokens.h"
 #if PXR_VERSION >= 2308
 #include "hdPrman/renderSettings.h"
 #endif
@@ -22,12 +23,16 @@
 #include "pxr/imaging/hd/perfLog.h"
 #include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/rprim.h"
+#if HD_API_VERSION >= 76
+#include "pxr/imaging/hd/sceneGlobalsSchema.h"
+#endif
 #if PXR_VERSION >= 2308
 #include "pxr/imaging/hd/utils.h"
 #endif
 
 #include "pxr/base/tf/envSetting.h"
 #include "pxr/base/tf/token.h"
+#include "hdPrman/worldOffsetSceneIndexPlugin.h"
 
 #include <Riley.h>
 
@@ -49,7 +54,6 @@ HdPrman_RenderPass::HdPrman_RenderPass(
 , _lastRenderedVersion(0)
 , _lastTaskRenderTagsVersion(0)
 , _lastRprimRenderTagVersion(0)
-, _projection(HdPrmanProjectionTokens->PxrPerspective)
 , _quickIntegrateTime(0.2f)
 {
     TF_VERIFY(_renderParam);
@@ -340,6 +344,22 @@ _ComputeCameraFramingFromSettings(
 #endif
 }
 
+#if HD_API_VERSION >= 76
+int
+_GetSceneStateId(const HdRenderIndex * const renderIndex)
+{
+    // Collect the scene state id from the render index.
+    if (const auto terminal = renderIndex->GetTerminalSceneIndex()) {
+        const auto globals = HdSceneGlobalsSchema::GetFromSceneIndex(terminal);
+        if (const auto idDs = globals.GetSceneStateId()) {
+            return idDs->GetTypedValue(0.0);
+        }
+    }
+
+    return 0;
+}
+#endif
+
 } // end anonymous namespace
 
 
@@ -492,7 +512,7 @@ HdPrman_RenderPass::_Execute(
     
     if (driveWithRenderSettingsPrim) {
         HdPrman_RenderParam * const param = _renderParam.get();
-        
+
         const bool success =
             rsPrim->UpdateAndRender(GetRenderIndex(), isInteractive, param);
 
@@ -506,6 +526,17 @@ HdPrman_RenderPass::_Execute(
                 _MarkBindingsAsConverged(aovBindings, GetRenderIndex());
             }
             _converged = true;
+
+            // Write the id info for batch renders if the render pass contains 
+            // an idMap product.
+            if (!isInteractive) {
+                TfToken idMapProductName =
+                    _renderParam->GetIdMapProductName(rsPrim);
+                if (!idMapProductName.IsEmpty()) {
+                    _renderParam->WriteIdMap(
+                        GetRenderIndex(), idMapProductName);
+                }
+            }
 
             return;
         }
@@ -555,6 +586,33 @@ HdPrman_RenderPass::_Execute(
     const bool frameChanged = _renderParam->frame != frame;
     _renderParam->frame = frame;
 
+    // Update World Offset
+    {
+        // Although it's incorrect we are defaulting to world origin as world
+        // (instead of camera) to try and avoid slow camera movement.
+        const std::string worldOrigin
+            = renderDelegate->GetRenderSetting<std::string>(
+                HdPrmanRenderSettingsTokens->worldOrigin, "world");
+        GfVec3d worldOffset = (worldOrigin != "world")
+            ? renderDelegate->GetRenderSetting<GfVec3d>(
+                HdPrmanRenderSettingsTokens->worldOffset,
+                GfVec3d(0.0, 0.0, 0.0))
+            : GfVec3d(0.0, 0.0, 0.0);
+        SdfPath renderCamera = (worldOrigin == "camera")
+            ? cameraContext.GetCameraPath()
+            : SdfPath::EmptyPath();
+
+        if (worldOffset != HdPrman_WorldOffsetSceneIndexPlugin::GetWorldOffset()
+        || renderCamera != HdPrman_WorldOffsetSceneIndexPlugin::GetRenderCamera()) {
+            HdPrman_WorldOffsetSceneIndexPlugin::SetWorldOffset(worldOffset);
+            HdPrman_WorldOffsetSceneIndexPlugin::SetRenderCamera(renderCamera);
+            // Mark Some Prims Dirty To Trigger Re-Cook
+            GetRenderIndex()->GetChangeTracker().MarkSprimDirty(
+                cameraContext.GetCameraPath(), HdChangeTracker::DirtyTransform);
+            GetRenderIndex()->GetChangeTracker().MarkAllRprimsDirty(
+                HdChangeTracker::DirtyTransform);
+        }
+    }
 
     //
     // ------------------------------------------------------------------------
@@ -616,7 +674,7 @@ HdPrman_RenderPass::_Execute(
         return;
     }
 
-    if (resolutionChanged || camChanged) {
+    if (resolutionChanged) {
         rvCtx.SetResolution(resolution, _renderParam->AcquireRiley());
     }
     //
@@ -683,18 +741,20 @@ HdPrman_RenderPass::_Execute(
         _renderParam->UpdateLegacyOptions();
 
         // Set Projection Settings
-        _projection = renderDelegate->GetRenderSetting<std::string>(
+        std::string projection = renderDelegate->GetRenderSetting<std::string>(
             HdPrmanRenderSettingsTokens->projectionName,
-            _projection);
+            "");
 
-        RtParamList projectionParams;
-        _renderParam->SetProjectionParamsFromRenderSettings(
-            (HdPrmanRenderDelegate*)renderDelegate,
-            _projection,
-             projectionParams);
+        if (!projection.empty()) {
+            RtParamList projectionParams;
+            _renderParam->SetProjectionParamsFromRenderSettings(
+                (HdPrmanRenderDelegate*)renderDelegate,
+                projection,
+                projectionParams);
 
-        cameraContext.SetProjectionOverride(RtUString(_projection.c_str()),
-                                            projectionParams);
+            cameraContext.SetProjectionOverride(
+                RtUString(projection.c_str()), projectionParams);
+        }
 
         // Set Resolution, Crop Window, Pixel Aspect Ratio,
         // and update camera settings.
@@ -745,6 +805,19 @@ HdPrman_RenderPass::_Execute(
 #endif
         }
     }
+
+#if HD_API_VERSION >= 76
+    // Update the render param arbirary value for the scene state id.
+    // This value is extracted from the terminal scene index right before 
+    // before restarting the render. Setting this at this point allows
+    // clients to be aware when the rendering of a specific scene state
+    // is about to begin. This could also be directly accessed via the
+    // render index global settings as soon as it is available ther, but
+    // that can be a bit too early for some cases.
+    _renderParam->SetArbitraryValue(
+        HdPrmanRenderParamTokens->sceneStateId,
+        VtValue(_GetSceneStateId(GetRenderIndex())));
+#endif
 
     if (isInteractive) {
         // This path uses the render thread to start the render.
